@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">My Application UDP Rcv</string>
+    <string name="start">开始</string>
+</resources>
