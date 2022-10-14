@@ -14,6 +14,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
@@ -27,8 +29,9 @@ public class SocketRev {
     private static final String TAG = SocketRev.class.getSimpleName();
     private static final int SPE_FRAME_LEN = 20 + 8 + 9;
 
-    private static final int BUF_SIZE = 1400;
-    byte[] dataFrameBuffer = new byte[BUF_SIZE * BUF_SIZE];
+    private static final int BUF_SIZE = 65535;
+
+    byte[] dataFrameBuffer = new byte[BUF_SIZE * 100];
     byte[] speFrameBuffer = new byte[SPE_FRAME_LEN];
     int dataFrameBufferIdx = 0;
     int speFrameBufferIdx = 0;
@@ -61,7 +64,7 @@ public class SocketRev {
 
     void add_data_into_data_frame(byte[] data, int startIdx, int len) {
         // Log.d(TAG, "copy data " + len + " bytes into data frame buffer");
-        if (len >= 0) System.arraycopy(data, startIdx, dataFrameBuffer, dataFrameBufferIdx, len);
+        System.arraycopy(data, startIdx, dataFrameBuffer, dataFrameBufferIdx, len);
         dataFrameBufferIdx += len;
     }
 
@@ -94,7 +97,7 @@ public class SocketRev {
 
     private void handleSPEFrameWrite() {
         totalHandle = totalHandle + SPE_FRAME_LEN;
-        writeFile(speFrameBuffer, SPE_FRAME_LEN);
+        // writeFile(speFrameBuffer, SPE_FRAME_LEN);
     }
 
     private void handleSPEFrame() {
@@ -118,27 +121,40 @@ public class SocketRev {
         Log.d(TAG, "totalRecv: " + totalRecv);
         Log.d(TAG, "totalHandle: " + totalHandle);
 
-        writeFile(dataFrameBuffer, dataFrameBufferIdx);
+        // writeFile(dataFrameBuffer, dataFrameBufferIdx);
         dataFrameBufferIdx = 0;
     }
 
     private void handleDataFrame() {
 
         if (ifStartDisplay) {
+            // Log.d(TAG, "-------handleDataFrame: " + dataFrameBufferIdx);
             byte[] frame = cutFrame(dataFrameBuffer, 0, dataFrameBufferIdx);
 
             mh264FrameProducer.addFrameToQueue(frame);
 
-            if (frame[4] != 0x65) {
-                Log.d(TAG, "p/b data frame: " + byteToHexString(frame[4]));
-            } else {
-                Log.d(TAG, "i frame");
-            }
+//            if (frame[4] != 0x65) {
+//                Log.d(TAG, "p/b data frame: " + byteToHexString(frame[4]));
+//            } else {
+//                Log.d(TAG, "i frame");
+//            }
 
             // Log.d(TAG, "-------handleDataFrame: " + dataFrameBufferIdx);
             dataFrameBufferIdx = 0;
         }
 
+    }
+
+    private boolean ifFoundSPEFrame(byte[] data, int packetLen) {
+        if (packetLen == 20 && (data[4] == 0x67)) {
+            return true;
+        } else if (packetLen == 8 && (data[4] == 0x68)) {
+            return true;
+        } else if (packetLen == 9 && (data[4] == 0x06)) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
     private boolean ifFoundKeyFrame(byte[] data, int startIdx, byte keyByte) {
@@ -167,24 +183,35 @@ public class SocketRev {
         }
     }
 
-    @SuppressLint("SdCardPath")
-    File h264File = new File("/data/data/com.wulala.myapplicationudprcv/", System.currentTimeMillis() + ".h264");
-    FileOutputStream fileOutputStream = null;
+    public void checkUDPData(byte[] data, int dataLen) {
+        if (ifStartDisplay && ifFoundKeyFrame(data, 0, I_FRAME_CHAR)) {
+            Log.d(TAG, "I frame found: ");
+            add_data_into_data_frame(data, 0, dataLen);
+        } else if (ifStartDisplay && ifFoundKeyFrame(data, 0, D_FRAME_CHAR)) {
+            // Log.d(TAG, "Data frame found: ");
+            // 发送到解码器
+            handleDataFrame();
+            // 要将目前的数据添加进数据缓存
+            add_data_into_data_frame(data, 0, dataLen);
 
-    public void writeFile(byte[] data, int len) {
-        try {
-            if (fileOutputStream == null) {
-                fileOutputStream = new FileOutputStream(h264File, true);
+        } else if (ifFoundSPEFrame(data, dataLen)) {
+            // 如果是SPS, 还需要发送前面的数据帧
+            if (dataLen == 20 && (data[4] == 0x67)) {
+                handleDataFrame();
             }
-            fileOutputStream.write(data, 0, len);
-            fileOutputStream.flush();
-        } catch (Exception e) {
-            e.printStackTrace();
+            // Log.d(TAG, "SPE frame found: ");
+            mh264FrameProducer.addFrameToQueue(data);
+            if (!ifStartDisplay) {
+                Log.d(TAG, "ifStartDisplay true ");
+                ifStartDisplay = true;
+            }
+        } else if (ifStartDisplay) {
+            add_data_into_data_frame(data, 0, dataLen);
         }
     }
 
     // 核心
-    private void checkData(byte[] data, int dataLen) {
+    public void checkData(byte[] data, int dataLen) {
         // Log.d(TAG, "checkData: " + data.length);
         boolean ifFoundKeyFrame = false;
         for (int dataIdx = 0; dataIdx < dataLen - 5; dataIdx++) {
@@ -225,7 +252,8 @@ public class SocketRev {
                 if (!ifStartDisplay) {
 
                     Log.d(TAG, "Start display thread: ");
-                    mDecoder.start();
+
+                    // mDecoder.start();
 
                     // 修改状态机
                     ifStartDisplay = true;
@@ -322,22 +350,61 @@ public class SocketRev {
 
 
     public void init() {
-
         new Thread() {
             @Override
             public void run() {
                 super.run();
                 try {
+                    DatagramSocket ds = new DatagramSocket(PORT);
+                    //创建字节数组
+                    byte[] data = new byte[BUF_SIZE];
+                    byte[] byteData = new byte[BUF_SIZE];
+                    //创建数据包对象，传递字节数组
+                    DatagramPacket dp = new DatagramPacket(data, data.length);
+                    int readBytes = 0;
+                    while (true) {
+                        //接收数据
+                        ds.receive(dp);
+                        //解析数据
+                        // String ip=dp.getAddress().getHostAddress();
+                        // String text=new String(dp.getData(),0,dp.getLength());
+                        //输出数据
+                        // System.out.println(ip+":"+text);
+                        readBytes = dp.getLength();
+                        byteData = dp.getData();
+                        Log.d(TAG, "readBytes: " + readBytes);
+                        checkData(byteData, readBytes);
+
+                        byteData = new byte[BUF_SIZE];
+
+                        // writeFile(byteData, readBytes);
+                        // data = new byte[BUF_SIZE];
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }.start();
+
+        /*
+        new Thread() {
+            @Override
+            public void run() {
+                super.run();
+                try {
+
+                    // DatagramSocket ds = new DatagramSocket(PORT);
                     Socket socket = new Socket(SEVER_IP, PORT);
 
                     InputStream is = socket.getInputStream();
+
                     // InputStreamReader reader = new InputStreamReader(is);
                     // BufferedReader bufferedReader = new BufferedReader(reader);
                     // char[] buffer = new char[BUF_SIZE];
                     byte[] byteData = new byte[BUF_SIZE];
+                    DatagramPacket dp = new DatagramPacket(byteData, byteData.length);
                     int readBytes = 0;
                     while (readBytes != -1) {
-
                         readBytes = is.read(byteData);
                         // readBytes = bufferedReader.read(buffer);
                         if (readBytes > 0) {
@@ -373,6 +440,9 @@ public class SocketRev {
                 }
 
             }
-        }.start();
+        }.
+
+                start();
+         */
     }
 }
