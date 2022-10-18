@@ -104,13 +104,14 @@ public class DisplayThread implements Runnable {
 
                 mediaCodec.releaseOutputBuffer(index, true);
 
-//                long timeGap = System.currentTimeMillis() - lastOutTime;
-//
-//                if (timeGap > 50) {
-//                    Log.d(TAG, "out >>>>>>" + timeGap);
-//                } else {
-//                    Log.d(TAG, "out: " + timeGap);
-//                }
+                long timeGap = System.currentTimeMillis() - lastOutTime;
+
+                if (timeGap > 50) {
+                    Log.d(TAG, "out >>>>>>" + timeGap);
+                } else {
+                    Log.d(TAG, "out: " + timeGap);
+                }
+                lastOutTime = System.currentTimeMillis();
                 // Log.d(TAG, " total out: " + totalOut);
 
                 // 尝试加入delay
@@ -201,21 +202,19 @@ public class DisplayThread implements Runnable {
 
                 lastInTime = System.currentTimeMillis();
                 totalIn++;
-                if (totalIn < 10000) {
-                    ByteBuffer inputData = mediaCodec.getInputBuffer(inputIndex);
-                    inputData.clear();
-                    inputData.put(frameData);
-                    // Log.d(TAG, "frameData.length: " + frameData.length);
-                    long ts = System.nanoTime() / 1000;
-                    if (frameData.length < 30) {
-                        // Log.d(TAG, "presentationTimeUs IN KEY: " + ts);
-                    } else {
-                        // Log.d(TAG, "presentationTimeUs IN: " + ts);
-                    }
-
-                    mediaCodec.queueInputBuffer(inputIndex, 0, frameData.length, ts, 0);
-                    // mediaCodec.queueInputBuffer(inputIndex, 0, frameData.length, 0, 0);
+                ByteBuffer inputData = mediaCodec.getInputBuffer(inputIndex);
+                inputData.clear();
+                inputData.put(frameData);
+                // Log.d(TAG, "frameData.length: " + frameData.length);
+                long ts = System.nanoTime() / 1000;
+                if (frameData.length < 30) {
+                    // Log.d(TAG, "presentationTimeUs IN KEY: " + ts);
+                } else {
+                    // Log.d(TAG, "presentationTimeUs IN: " + ts);
                 }
+
+                mediaCodec.queueInputBuffer(inputIndex, 0, frameData.length, ts, 0);
+                // mediaCodec.queueInputBuffer(inputIndex, 0, frameData.length, 0, 0);
             }
         }
 
